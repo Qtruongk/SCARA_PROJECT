@@ -76,6 +76,16 @@ Hệ thống cung cấp:
 | 5 | **AI kiểm định chất lượng bề mặt & Giám sát an toàn (Defect Inspection)** | Kết hợp mô hình AI và xử lý ảnh để kiểm tra phôi sau khi hút (phát hiện mẻ cạnh, trượt phôi, lệch giác hút) và giám sát liên tục quá trình chuyển giao Wafer an toàn. | ⏳ Chờ thực hiện |
 | 6 | **Bù trừ sai lệch tọa độ tự động (Vision-Guided Offset)** | Tự động tính toán sai lệch vị trí/góc xoay thực tế so với danh định và bù trừ trực tiếp vào quỹ đạo di chuyển của Robot SCARA để gắp/đặt chính xác tuyệt đối. | ⏳ Chờ thực hiện |
 
+### Phase 5: Nghiên cứu & Tăng tốc phần cứng trên nền tảng FPGA (FPGA-based Acceleration & Control)
+
+| STT | Hạng mục công việc | Mô tả chi tiết | Trạng thái |
+| :---: | :--- | :--- | :---: |
+| 1 | **Nghiên cứu kiến trúc & Lựa chọn phần cứng SoC/FPGA** | Khảo sát nền tảng FPGA/SoC công nghiệp (Xilinx Zynq UltraScale+ / AMD Kria SOM hoặc tương đương); xây dựng kiến trúc đồng thiết kế Phần cứng/Phần mềm (HW/SW Co-design): phân bổ tác vụ điều khiển cấp cao trên ARM Processing System (PS) và tăng tốc xử lý dữ liệu song song trên Programmable Logic (PL). | ⏳ Chờ thực hiện |
+| 2 | **Thiết kế IP Core tiền xử lý ảnh thời gian thực trên FPGA** | Phát triển các khối IP Core phần cứng (Verilog/VHDL hoặc HLS) thực hiện tiền xử lý luồng video độ phân giải cao: cân bằng trắng, lọc nhị phân thích nghi, khử nhiễu và phát hiện biên dạng tròn phiến Wafer với độ trễ cực thấp (cấp vi giây) và thông lượng cao (High Throughput). | ⏳ Chờ thực hiện |
+| 3 | **Triển khai tăng tốc suy luận mô hình AI (DPU on FPGA)** | Lượng tử hóa mô hình Deep Learning (INT8/FP16) và nạp lên bộ vi xử lý nơ-ron chuyên dụng (DPU - Deep Learning Processing Unit) trên FPGA; tối ưu hóa đường truyền dữ liệu AXI phục vụ nhận diện khuyết tật bề mặt Wafer và phân loại lỗi khay FOUP tốc độ cao. | ⏳ Chờ thực hiện |
+| 4 | **Thiết kế IP Core giám sát cảm biến & Đồng bộ an toàn** | Xây dựng khối phần cứng đọc tín hiệu áp suất chân không tốc độ cao qua SPI/I2C và phát xung kích hoạt đồng bộ (Trigger Synchronization) cho camera và van hút; tích hợp cơ chế ngắt phần cứng dừng khẩn cấp tức thì bảo vệ phiến silicon khi phát hiện tụt áp suất. | ⏳ Chờ thực hiện |
+| 5 | **Tích hợp hệ thống SoC/FPGA vào phần mềm điều khiển & Đánh giá hiệu năng** | Kết nối bo mạch FPGA với máy tính điều khiển IPC qua giao thức Ethernet/PCIe thời gian thực; thực hiện đo kiểm, đánh giá so sánh hiệu năng (độ trễ xử lý, FPS, mức tiêu thụ năng lượng và tính ổn định thời gian thực) giữa kiến trúc FPGA-based và hệ thống PC truyền thống. | ⏳ Chờ thực hiện |
+
 ## Yêu cầu và Cài đặt
 1. Mở project (`Test_1.sln`) bằng Visual Studio.
 2. Đảm bảo các thư viện trong thư mục `Libs` được tham chiếu đầy đủ.
