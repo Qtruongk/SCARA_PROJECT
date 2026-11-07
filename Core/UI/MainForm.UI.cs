@@ -15,6 +15,9 @@ namespace Test_1.UI
 
         // Exposed controls for events
         private TrackBar tbSpeed;
+        private Label _lblGuideSpeedVal;
+        private Action<int> _navigateToTab;
+        private Action<int> _setGuideMode;
         private Button btnGuideRun;
         private Button btnGuideStop;
         private Button btnStartDemo;
@@ -29,6 +32,54 @@ namespace Test_1.UI
         private System.Windows.Forms.DataVisualization.Charting.Series sPos;
         private System.Windows.Forms.DataVisualization.Charting.Series sVel;
         private System.Windows.Forms.DataVisualization.Charting.Series sAcc;
+
+        internal void SetSharedSpeed(int speed)
+        {
+            if (_syncingSpeed) return;
+            _syncingSpeed = true;
+            try
+            {
+                int clamped = Math.Max(1, Math.Min(100, speed));
+                if (tbSpeed != null && !tbSpeed.IsDisposed)
+                {
+                    tbSpeed.Value = clamped;
+                    if (_lblGuideSpeedVal != null && !_lblGuideSpeedVal.IsDisposed)
+                        _lblGuideSpeedVal.Text = clamped + " %";
+                }
+                if (_tbTeachSpeed != null && !_tbTeachSpeed.IsDisposed)
+                {
+                    _tbTeachSpeed.Value = clamped;
+                    if (_lblTeachSpeedVal != null && !_lblTeachSpeedVal.IsDisposed)
+                        _lblTeachSpeedVal.Text = clamped + " %";
+                }
+            }
+            finally
+            {
+                _syncingSpeed = false;
+            }
+        }
+
+        internal void LoadPointToGuideTarget(TeachingPoint pt, bool switchToGuideTab)
+        {
+            if (pt == null) return;
+            txtCart[0].Text = pt.X.ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
+            txtCart[1].Text = pt.Y.ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
+            txtCart[2].Text = pt.Z.ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
+            txtCart[3].Text = pt.C.ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
+            if (Math.Abs(pt.J1) > 0.001 || Math.Abs(pt.J2) > 0.001 || Math.Abs(pt.J3) > 0.001 || Math.Abs(pt.J4) > 0.001)
+            {
+                txtAxes[0].Text = pt.J1.ToString("F2", System.Globalization.CultureInfo.InvariantCulture);
+                txtAxes[1].Text = pt.J2.ToString("F2", System.Globalization.CultureInfo.InvariantCulture);
+                txtAxes[2].Text = pt.J3.ToString("F2", System.Globalization.CultureInfo.InvariantCulture);
+                txtAxes[3].Text = pt.J4.ToString("F2", System.Globalization.CultureInfo.InvariantCulture);
+            }
+            _setGuideMode?.Invoke(3);
+            _logger.Log($"[Point] Đã nạp điểm '{pt.Name}' vào ô đích Guide Key: X={pt.X:F3}, Y={pt.Y:F3}, Z={pt.Z:F3}, C={pt.C:F2}");
+            if (switchToGuideTab)
+            {
+                _navigateToTab?.Invoke(1);
+            }
+        }
 
         private void InitializeModernUI()
         {
@@ -137,9 +188,16 @@ namespace Test_1.UI
                 e.Graphics.DrawLine(new Pen(borderColor, 1), sidebar.Width - 1, 0, sidebar.Width - 1, sidebar.Height);
             };
 
-            string[] navItems = { "🏠 Home", "🎮 Guide key", "🎨 Shape Drawing", "📷 Vision Camera" };
+            // Đặt biến cờ ẩn/hiện tab Vision Camera (true: hiện, false: tạm thời ẩn khỏi thanh điều hướng)
+            bool showVisionCameraTab = false;
+
+            string[] navItems = showVisionCameraTab 
+                ? new string[] { "🏠 Home", "🎮 Guide key", "📍 Point Teaching", "🎨 Shape Drawing", "📷 Vision Camera" }
+                : new string[] { "🏠 Home", "🎮 Guide key", "📍 Point Teaching", "🎨 Shape Drawing" };
             Button[] navBtns = new Button[navItems.Length];
-            int navY = 20;
+            int navStartY = 14;
+            int navItemH = 42;
+            int navY = navStartY;
             for (int i = 0; i < navItems.Length; i++)
             {
                 Button btn = new Button {
@@ -147,7 +205,7 @@ namespace Test_1.UI
                     FlatStyle = FlatStyle.Flat,
                     TextAlign = ContentAlignment.MiddleLeft,
                     Width = 220,
-                    Height = 45,
+                    Height = navItemH,
                     Location = new Point(0, navY),
                     Font = new Font("Segoe UI", 10F, FontStyle.Regular),
                     ForeColor = Color.FromArgb(80, 90, 105),
@@ -159,10 +217,10 @@ namespace Test_1.UI
                 btn.FlatAppearance.MouseDownBackColor = Color.FromArgb(228, 233, 240);
                 sidebar.Controls.Add(btn);
                 navBtns[i] = btn;
-                navY += 45;
+                navY += navItemH;
             }
 
-            Panel activeIndicator = new Panel { BackColor = primaryColor, Width = 4, Height = 45, Location = new Point(0, 20) };
+            Panel activeIndicator = new Panel { BackColor = primaryColor, Width = 4, Height = navItemH, Location = new Point(0, navStartY) };
             sidebar.Controls.Add(activeIndicator);
             activeIndicator.BringToFront();
 
@@ -178,7 +236,12 @@ namespace Test_1.UI
                         navBtns[i].Font = new Font("Segoe UI", 10F, FontStyle.Regular);
                     }
                 }
-                activeIndicator.Location = new Point(0, 20 + selIdx * 45);
+                if (selIdx >= 0 && selIdx < navBtns.Length) {
+                    activeIndicator.Visible = true;
+                    activeIndicator.Location = new Point(0, navStartY + selIdx * navItemH);
+                } else {
+                    activeIndicator.Visible = false;
+                }
             };
 
             // Project Info Panel in Sidebar
@@ -373,80 +436,86 @@ namespace Test_1.UI
 
             // Guide Key Workspace
             Panel workspaceGuide = new Panel {
+                Name = "workspaceGuide",
                 Dock = DockStyle.Fill,
                 BackColor = canvasBg,
                 Padding = new Padding(12),
                 Visible = false,
                 AutoScroll = true
             };
-            
-            // Mode selector buttons at top
-            Button btnMode1 = new Button { Text = "TextBox", Location = new Point(12, 10), Size = new Size(110, 32), FlatStyle = FlatStyle.Flat, BackColor = primaryColor, ForeColor = Color.White, Font = new Font("Segoe UI", 9F, FontStyle.Bold), Cursor = Cursors.Hand };
-            btnMode1.FlatAppearance.BorderSize = 0;
-            Button btnMode2 = new Button { Text = "Slider", Location = new Point(128, 10), Size = new Size(110, 32), FlatStyle = FlatStyle.Flat, BackColor = Color.White, ForeColor = darkText, Font = new Font("Segoe UI", 9F, FontStyle.Bold), Cursor = Cursors.Hand };
-            btnMode2.FlatAppearance.BorderColor = borderColor;
-            Button btnMode3 = new Button { Text = "Cartesian", Location = new Point(244, 10), Size = new Size(120, 32), FlatStyle = FlatStyle.Flat, BackColor = Color.White, ForeColor = darkText, Font = new Font("Segoe UI", 9F, FontStyle.Bold), Cursor = Cursors.Hand };
-            btnMode3.FlatAppearance.BorderColor = borderColor;
 
-            workspaceGuide.Controls.Add(btnMode1);
-            workspaceGuide.Controls.Add(btnMode2);
-            workspaceGuide.Controls.Add(btnMode3);
-
-            // Left Card: Target Position Inputs
-            Panel pnlTarget = new Panel { BackColor = Color.White, AutoScroll = true };
+            // ==========================================
+            // CARD 1 (TRÁI): VỊ TRÍ ĐÍCH & DI CHUYỂN
+            // ==========================================
+            Panel pnlTarget = new Panel { BackColor = Color.White, AutoScroll = false };
             pnlTarget.Paint += (s, e) => { e.Graphics.DrawRectangle(new Pen(borderColor, 1), 0, 0, pnlTarget.Width - 1, pnlTarget.Height - 1); };
-            Label lblTargetTitle = new Label { Text = "🎯 Vị trí Đích (Target Position)", Font = new Font("Segoe UI", 10F, FontStyle.Bold), ForeColor = primaryColor, Location = new Point(14, 12), AutoSize = true };
+
+            Label lblTargetTitle = new Label {
+                Text = "🎯 VỊ TRÍ ĐÍCH & DI CHUYỂN",
+                Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+                ForeColor = primaryColor,
+                Location = new Point(14, 12),
+                AutoSize = true,
+                UseMnemonic = false
+            };
             pnlTarget.Controls.Add(lblTargetTitle);
 
-            // Button to read current coordinates directly into target fields
+            // Mode selector buttons (TextBox, Slider, Cartesian) neatly inside card
+            Button btnMode1 = new Button { Text = "TextBox", Location = new Point(14, 38), Size = new Size(100, 29), FlatStyle = FlatStyle.Flat, BackColor = primaryColor, ForeColor = Color.White, Font = new Font("Segoe UI", 8.5F, FontStyle.Bold), Cursor = Cursors.Hand };
+            btnMode1.FlatAppearance.BorderSize = 0;
+            Button btnMode2 = new Button { Text = "Slider", Location = new Point(120, 38), Size = new Size(100, 29), FlatStyle = FlatStyle.Flat, BackColor = Color.White, ForeColor = darkText, Font = new Font("Segoe UI", 8.5F, FontStyle.Bold), Cursor = Cursors.Hand };
+            btnMode2.FlatAppearance.BorderColor = borderColor;
+            Button btnMode3 = new Button { Text = "Cartesian", Location = new Point(226, 38), Size = new Size(116, 29), FlatStyle = FlatStyle.Flat, BackColor = Color.White, ForeColor = darkText, Font = new Font("Segoe UI", 8.5F, FontStyle.Bold), Cursor = Cursors.Hand };
+            btnMode3.FlatAppearance.BorderColor = borderColor;
+
+            pnlTarget.Controls.Add(btnMode1);
+            pnlTarget.Controls.Add(btnMode2);
+            pnlTarget.Controls.Add(btnMode3);
+
             Button btnReadToTarget = new Button {
                 Text = "📥 ĐỌC TỌA ĐỘ HIỆN TẠI VÀO ĐÍCH",
-                Location = new Point(14, 38),
-                Size = new Size(260, 32),
+                Location = new Point(14, 75),
+                Size = new Size(328, 30),
                 BackColor = Color.FromArgb(70, 95, 133),
                 ForeColor = Color.White,
-                Font = new Font("Segoe UI", 9F, FontStyle.Bold),
+                Font = new Font("Segoe UI", 8.5F, FontStyle.Bold),
                 FlatStyle = FlatStyle.Flat,
                 Cursor = Cursors.Hand
             };
             btnReadToTarget.FlatAppearance.BorderSize = 0;
             pnlTarget.Controls.Add(btnReadToTarget);
 
-            Panel pnlMode1 = new Panel { Location = new Point(12, 78), Visible = true, BackColor = Color.White };
-            Panel pnlMode2 = new Panel { Location = new Point(12, 78), Visible = false, BackColor = Color.White };
-            Panel pnlMode3 = new Panel { Location = new Point(12, 78), Visible = false, BackColor = Color.White };
+            pnlMode1 = new Panel { Location = new Point(14, 114), Size = new Size(328, 140), Visible = true, BackColor = Color.White };
+            pnlMode2 = new Panel { Location = new Point(14, 114), Size = new Size(328, 140), Visible = false, BackColor = Color.White };
+            pnlMode3 = new Panel { Location = new Point(14, 114), Size = new Size(328, 140), Visible = false, BackColor = Color.White };
 
             pnlTarget.Controls.Add(pnlMode1);
             pnlTarget.Controls.Add(pnlMode2);
             pnlTarget.Controls.Add(pnlMode3);
 
-            TextBox[] txtAxes = new TextBox[4];
             Label[] unitsAxes = new Label[4];
-            TrackBar[] tbAxes = new TrackBar[4];
             Label[] lblAxesVal = new Label[4];
-            TextBox[] txtCart = new TextBox[4];
 
             // Build Mode 1 & 2 controls
             for (int i = 1; i <= 4; i++) {
-                int y = 6 + (i - 1) * 44;
+                int y = (i - 1) * 34;
                 
                 // Mode 1: TextBox
-                Label lbl1 = new Label { Text = "Axis " + i + ":", Font = new Font("Segoe UI", 9.5F, FontStyle.Bold), ForeColor = darkText, Location = new Point(10, y + 4), AutoSize = true };
-                TextBox txt = new TextBox { Text = "0.0", Font = new Font("Segoe UI", 10F, FontStyle.Bold), BackColor = Color.White, ForeColor = darkText, Location = new Point(85, y), Size = new Size(130, 26), TextAlign = HorizontalAlignment.Right, BorderStyle = BorderStyle.FixedSingle };
+                Label lbl1 = new Label { Text = "Axis " + i + ":", Font = new Font("Segoe UI", 9F, FontStyle.Bold), ForeColor = darkText, Location = new Point(4, y + 4), AutoSize = true };
+                TextBox txt = new TextBox { Text = "0.0", Font = new Font("Segoe UI", 9.5F, FontStyle.Bold), BackColor = Color.White, ForeColor = darkText, Location = new Point(76, y), Size = new Size(165, 25), TextAlign = HorizontalAlignment.Right, BorderStyle = BorderStyle.FixedSingle };
                 txt.Enter += (s, e) => txt.SelectAll();
                 txt.Click += (s, e) => txt.SelectAll();
-                Label unit1 = new Label { Text = (i == 3) ? "mm" : "deg", Font = new Font("Segoe UI", 9F), ForeColor = mutedText, Location = new Point(225, y + 4), AutoSize = true };
+                Label unit1 = new Label { Text = (i == 3) ? "mm" : "deg", Font = new Font("Segoe UI", 8.5F), ForeColor = mutedText, Location = new Point(248, y + 4), AutoSize = true };
                 txtAxes[i - 1] = txt;
                 unitsAxes[i - 1] = unit1;
                 pnlMode1.Controls.Add(lbl1); pnlMode1.Controls.Add(txt); pnlMode1.Controls.Add(unit1);
                 
                 // Mode 2: Slider
-                Label lbl2 = new Label { Text = "Axis " + i + ":", Font = new Font("Segoe UI", 9.5F, FontStyle.Bold), ForeColor = darkText, Location = new Point(6, y + 4), AutoSize = true };
-                TrackBar tb = new TrackBar { Minimum = -180, Maximum = 180, Value = 0, Location = new Point(68, y), Size = new Size(160, 40), TickStyle = TickStyle.None };
+                Label lbl2 = new Label { Text = "Axis " + i + ":", Font = new Font("Segoe UI", 9F, FontStyle.Bold), ForeColor = darkText, Location = new Point(4, y + 4), AutoSize = true };
+                TrackBar tb = new TrackBar { Minimum = -180, Maximum = 180, Value = 0, Location = new Point(66, y - 1), Size = new Size(180, 28), AutoSize = false, TickStyle = TickStyle.None };
                 if (i == 3) { tb.Minimum = 0; tb.Maximum = 150; }
-                Label val2 = new Label { Text = "0.0", Font = new Font("Segoe UI", 9.5F, FontStyle.Bold), ForeColor = darkText, Location = new Point(235, y + 4), AutoSize = true };
+                Label val2 = new Label { Text = "0.0", Font = new Font("Segoe UI", 8.5F, FontStyle.Bold), ForeColor = darkText, Location = new Point(252, y + 4), AutoSize = true };
                 
-                int axisNo = i;
                 tb.Scroll += (s, e) => { val2.Text = tb.Value.ToString() + ".0"; };
                 tbAxes[i - 1] = tb;
                 lblAxesVal[i - 1] = val2;
@@ -456,9 +525,9 @@ namespace Test_1.UI
             // Build Mode 3 controls (Cartesian)
             string[] cartLabels = { "X (mm):", "Y (mm):", "Z (mm):", "C (deg):" };
             for (int i = 0; i < 4; i++) {
-                int y = 6 + i * 44;
-                Label lbl = new Label { Text = cartLabels[i], Font = new Font("Segoe UI", 9.5F, FontStyle.Bold), ForeColor = darkText, Location = new Point(10, y + 4), AutoSize = true };
-                TextBox txt = new TextBox { Text = "0.0", Font = new Font("Segoe UI", 10F, FontStyle.Bold), BackColor = Color.White, ForeColor = darkText, Location = new Point(85, y), Size = new Size(130, 26), TextAlign = HorizontalAlignment.Right, BorderStyle = BorderStyle.FixedSingle };
+                int y = i * 34;
+                Label lbl = new Label { Text = cartLabels[i], Font = new Font("Segoe UI", 9F, FontStyle.Bold), ForeColor = darkText, Location = new Point(4, y + 4), AutoSize = true };
+                TextBox txt = new TextBox { Text = "0.0", Font = new Font("Segoe UI", 9.5F, FontStyle.Bold), BackColor = Color.White, ForeColor = darkText, Location = new Point(76, y), Size = new Size(185, 25), TextAlign = HorizontalAlignment.Right, BorderStyle = BorderStyle.FixedSingle };
                 txt.Enter += (s, e) => txt.SelectAll();
                 txt.Click += (s, e) => txt.SelectAll();
                 txtCart[i] = txt;
@@ -482,28 +551,26 @@ namespace Test_1.UI
                 pnlMode2.Visible = (mode == 2);
                 pnlMode3.Visible = (mode == 3);
             };
+            _setGuideMode = setGuideMode;
 
             btnMode1.Click += (s, e) => setGuideMode(1);
             btnMode2.Click += (s, e) => setGuideMode(2);
             btnMode3.Click += (s, e) => setGuideMode(3);
 
-            // Right Card: Current Feedback & Motion Execution
+            // Read Current Position Action
             Action<bool> copyCurrentPosToTarget = (showFeedbackIfNull) => {
                 var pos = _robotService.GetCurrentPosition();
                 if (pos != null) {
-                    // Populate Cartesian coordinates
-                    txtCart[0].Text = pos.WorldPosition.X.ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
-                    txtCart[1].Text = pos.WorldPosition.Y.ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
-                    txtCart[2].Text = pos.WorldPosition.Z.ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
-                    txtCart[3].Text = pos.WorldPosition.C.ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
+                    txtCart[0].Text = pos.WorldPosition.X.ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
+                    txtCart[1].Text = pos.WorldPosition.Y.ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
+                    txtCart[2].Text = pos.WorldPosition.Z.ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
+                    txtCart[3].Text = pos.WorldPosition.C.ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
 
-                    // Populate Joint coordinates
-                    txtAxes[0].Text = pos.JointPosition.J1.ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
-                    txtAxes[1].Text = pos.JointPosition.J2.ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
-                    txtAxes[2].Text = pos.JointPosition.J3.ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
-                    txtAxes[3].Text = pos.JointPosition.J4.ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
+                    txtAxes[0].Text = pos.JointPosition.J1.ToString("F2", System.Globalization.CultureInfo.InvariantCulture);
+                    txtAxes[1].Text = pos.JointPosition.J2.ToString("F2", System.Globalization.CultureInfo.InvariantCulture);
+                    txtAxes[2].Text = pos.JointPosition.J3.ToString("F2", System.Globalization.CultureInfo.InvariantCulture);
+                    txtAxes[3].Text = pos.JointPosition.J4.ToString("F2", System.Globalization.CultureInfo.InvariantCulture);
 
-                    // Populate Joint sliders
                     int v1 = (int)Math.Round(pos.JointPosition.J1);
                     int v2 = (int)Math.Round(pos.JointPosition.J2);
                     int v3 = (int)Math.Round(pos.JointPosition.J3);
@@ -528,114 +595,58 @@ namespace Test_1.UI
             btnReadToTarget.Click += (s, e) => copyCurrentPosToTarget(true);
 
             // Divider line
-            Panel pnlDiv = new Panel { Location = new Point(14, 258), Size = new Size(330, 1), BackColor = borderColor };
+            Panel pnlDiv = new Panel { Location = new Point(14, 262), Size = new Size(328, 1), BackColor = borderColor };
             pnlTarget.Controls.Add(pnlDiv);
 
             // Speed Control
-            Label lblSpeed = new Label { Text = "Tốc độ (Speed):", Font = new Font("Segoe UI", 9F, FontStyle.Bold), ForeColor = darkText, Location = new Point(14, 273), AutoSize = true };
-            TrackBar tbSpeed = new TrackBar { Minimum = 1, Maximum = 100, Value = 10, Location = new Point(115, 268), Size = new Size(180, 40), TickStyle = TickStyle.None };
-            Label valSpeed = new Label { Text = "10 %", Font = new Font("Segoe UI", 9F, FontStyle.Bold), ForeColor = primaryColor, Location = new Point(300, 273), AutoSize = true };
-            tbSpeed.Scroll += (s, e) => { valSpeed.Text = tbSpeed.Value.ToString() + " %"; };
+            Label lblSpeed = new Label { Text = "Tốc độ (Speed):", Font = new Font("Segoe UI", 8.5F, FontStyle.Bold), ForeColor = darkText, Location = new Point(14, 276), AutoSize = true };
+            tbSpeed = new TrackBar { Minimum = 1, Maximum = 100, Value = 10, Location = new Point(115, 271), Size = new Size(165, 26), AutoSize = false, TickStyle = TickStyle.None };
+            Label valSpeed = new Label { Text = "10 %", Font = new Font("Segoe UI", 8.5F, FontStyle.Bold), ForeColor = primaryColor, Location = new Point(288, 276), AutoSize = true };
+            _lblGuideSpeedVal = valSpeed;
+            tbSpeed.Scroll += (s, e) => { SetSharedSpeed(tbSpeed.Value); };
 
             pnlTarget.Controls.Add(lblSpeed);
             pnlTarget.Controls.Add(tbSpeed);
             pnlTarget.Controls.Add(valSpeed);
 
-            // Execution Buttons: RUN & STOP inside pnlTarget
-            Button btnGuideRun = new Button { Text = "► RUN (CHẠY)", Location = new Point(14, 312), Size = new Size(170, 38), BackColor = Color.FromArgb(46, 125, 50), ForeColor = Color.White, Font = new Font("Segoe UI", 11F, FontStyle.Bold), FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand };
+            // Execution Buttons: RUN & STOP
+            btnGuideRun = new Button { Text = "► RUN (CHẠY)", Location = new Point(14, 314), Size = new Size(160, 36), BackColor = Color.FromArgb(46, 125, 50), ForeColor = Color.White, Font = new Font("Segoe UI", 9.5F, FontStyle.Bold), FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand };
             btnGuideRun.FlatAppearance.BorderSize = 0;
 
-            Button btnGuideStop = new Button { Text = "⏹ STOP (DỪNG)", Location = new Point(194, 312), Size = new Size(130, 38), BackColor = Color.FromArgb(198, 40, 40), ForeColor = Color.White, Font = new Font("Segoe UI", 10.5F, FontStyle.Bold), FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand };
+            btnGuideStop = new Button { Text = "⏹ STOP (DỪNG)", Location = new Point(182, 314), Size = new Size(160, 36), BackColor = Color.FromArgb(198, 40, 40), ForeColor = Color.White, Font = new Font("Segoe UI", 9.5F, FontStyle.Bold), FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand };
             btnGuideStop.FlatAppearance.BorderSize = 0;
 
             pnlTarget.Controls.Add(btnGuideRun);
             pnlTarget.Controls.Add(btnGuideStop);
 
-            workspaceGuide.Controls.Add(pnlTarget);
-
-            // Responsive Layout Manager for Guide Key
-            Action layoutGuide = () => {
-                int pad = 12;
-                int topY = 50;
-                int availW = workspaceGuide.ClientSize.Width - pad * 2;
-                int availH = workspaceGuide.ClientSize.Height - topY - pad;
-
-                pnlTarget.Location = new Point(pad, topY);
-                pnlTarget.Size = new Size(Math.Max(320, availW), Math.Max(380, availH));
-            };
-            workspaceGuide.Resize += (s, e) => layoutGuide();
-
-            // Inner responsive layout for pnlTarget
-            pnlTarget.Resize += (s, e) => {
-                int innerW = pnlTarget.ClientSize.Width - 28;
-                btnReadToTarget.Size = new Size(Math.Max(200, Math.Min(340, innerW)), 32);
-
-                int modeH = 175;
-                pnlMode1.Size = new Size(innerW, modeH);
-                pnlMode2.Size = new Size(innerW, modeH);
-                pnlMode3.Size = new Size(innerW, modeH);
-
-                int boxW = Math.Max(100, Math.Min(180, innerW - 130));
-                for (int i = 0; i < 4; i++) {
-                    if (txtCart[i] != null) txtCart[i].Width = boxW;
-                    if (txtAxes[i] != null) {
-                        txtAxes[i].Width = boxW;
-                        if (unitsAxes[i] != null) unitsAxes[i].Location = new Point(txtAxes[i].Right + 8, txtAxes[i].Top + 4);
-                    }
-                    if (tbAxes[i] != null) {
-                        tbAxes[i].Width = Math.Max(70, Math.Min(300, innerW - 130));
-                        if (lblAxesVal[i] != null) {
-                            lblAxesVal[i].Location = new Point(tbAxes[i].Right + 5, tbAxes[i].Top + 4);
-                        }
-                    }
-                }
-
-                pnlDiv.Location = new Point(14, 258);
-                pnlDiv.Size = new Size(Math.Max(280, innerW), 1);
-
-                lblSpeed.Location = new Point(14, 273);
-                tbSpeed.Location = new Point(115, 268);
-                tbSpeed.Size = new Size(Math.Max(80, Math.Min(220, innerW - 180)), 40);
-                valSpeed.Location = new Point(tbSpeed.Right + 5, 273);
-
-                int runW = Math.Max(130, Math.Min(200, (int)(innerW * 0.50)));
-                int stopW = Math.Max(110, Math.Min(160, (int)(innerW * 0.38)));
-                btnGuideRun.Location = new Point(14, 312);
-                btnGuideRun.Size = new Size(runW, 38);
-                btnGuideStop.Location = new Point(14 + runW + 12, 312);
-                btnGuideStop.Size = new Size(stopW, 38);
-            };
-
-            // Logic for Run
+            // Logic for Run & Stop
             btnGuideRun.Click += async (s, e) => {
                 if (_connectionChangePending || _statusCommandPending) return;
                 if (!_robotService.State.IsConnected) {
-                    _logger.Log("[Guide] Cannot run: Robot is not connected.");
                     MessageBox.Show("Robot chưa kết nối. Vui lòng bấm Connect trước.", "Chưa kết nối", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return;
                 }
                 if (!_robotService.State.IsServoOn) {
-                    _logger.Log("[Guide] Cannot run: Servo is OFF. Please turn Servo ON.");
                     MessageBox.Show("Servo đang tắt. Vui lòng bật Servo ON trước khi bấm RUN.", "Servo đang tắt", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return;
                 }
+
                 try {
                     int speed = tbSpeed.Value;
                     btnGuideRun.Enabled = false;
-                    
+
                     if (pnlMode1.Visible || pnlMode2.Visible) {
                         _logger.Log($"[Guide] RUN Joint bắt đầu ở tốc độ {speed}%...");
                         bool isMode1 = pnlMode1.Visible;
                         double[] targets = new double[4];
                         for (int i = 0; i < 4; i++) {
                             if (isMode1) {
-                                double.TryParse(txtAxes[i].Text.Trim().Replace(",", "."), System.Globalization.NumberStyles.Any,
-                                    System.Globalization.CultureInfo.InvariantCulture, out targets[i]);
+                                double.TryParse(txtAxes[i].Text.Trim().Replace(",", "."), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out targets[i]);
                             } else {
                                 targets[i] = tbAxes[i].Value;
                             }
                         }
-                        
+
                         await Task.Run(() => {
                             _robotService.EnsureWatchdogRunning();
                             _robotService.SetSpeed(speed);
@@ -648,9 +659,9 @@ namespace Test_1.UI
                         double.TryParse(txtCart[1].Text.Trim().Replace(",", "."), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double y);
                         double.TryParse(txtCart[2].Text.Trim().Replace(",", "."), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double z);
                         double.TryParse(txtCart[3].Text.Trim().Replace(",", "."), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double c);
-                        
+
                         _logger.Log($"[Guide] RUN Cartesian bắt đầu: X={x:F1}, Y={y:F1}, Z={z:F1}, C={c:F1} ở tốc độ {speed}%...");
-                        
+
                         await Task.Run(() => {
                             _robotService.EnsureWatchdogRunning();
                             _robotService.SetSpeed(speed);
@@ -660,15 +671,251 @@ namespace Test_1.UI
                 } catch (Exception ex) {
                     _logger.Log("[Guide] RUN Error: " + ex.Message);
                 } finally {
-                    btnGuideRun.Enabled = true;
+                    if (!btnGuideRun.IsDisposed) btnGuideRun.Enabled = true;
                 }
             };
 
-            // Logic for Stop
             btnGuideStop.Click += async (s, e) => {
                 await Task.Run(() => _robotService.StopMotion());
                 _logger.Log("[Guide] Đã gửi lệnh STOP dừng chuyển động robot.");
             };
+
+            // ==========================================
+            // CARD 2 (PHẢI): CẤU HÌNH TOOL TCP (TAY GẮP)
+            // ==========================================
+            Panel pnlToolConfig = new Panel { BackColor = Color.White, AutoScroll = false };
+            pnlToolConfig.Paint += (s, e) => { e.Graphics.DrawRectangle(new Pen(borderColor, 1), 0, 0, pnlToolConfig.Width - 1, pnlToolConfig.Height - 1); };
+
+            Label lblToolTitle = new Label {
+                Text = "🔧 CẤU HÌNH TOOL TCP (TAY GẮP 45x202.5 mm)",
+                Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+                ForeColor = primaryColor,
+                Location = new Point(14, 12),
+                AutoSize = true,
+                UseMnemonic = false
+            };
+            pnlToolConfig.Controls.Add(lblToolTitle);
+
+            Label lblToolSub = new Label {
+                Text = "Thiết lập độ lệch đầu công cụ giác hút so với mặt bích Flange (Tool 0).",
+                Font = new Font("Segoe UI", 8.5F),
+                ForeColor = mutedText,
+                Location = new Point(14, 34),
+                AutoSize = true,
+                UseMnemonic = false
+            };
+            pnlToolConfig.Controls.Add(lblToolSub);
+
+            Label lblToolStatus = new Label {
+                Text = "Trạng thái: ✔ TOOL 1 (TCP Giác hút BẬT: 119.0mm)",
+                Font = new Font("Segoe UI", 8.5F, FontStyle.Bold),
+                ForeColor = Color.FromArgb(46, 125, 50),
+                Location = new Point(14, 72),
+                AutoSize = true,
+                UseMnemonic = false
+            };
+            pnlToolConfig.Controls.Add(lblToolStatus);
+
+            Label lblToolX = new Label { Text = "X (mm):", Font = new Font("Segoe UI", 8.5F, FontStyle.Bold), ForeColor = darkText, Location = new Point(14, 104), AutoSize = true };
+            TextBox txtToolX = new TextBox { Text = _robotService.ToolOffsetX.ToString("F1", System.Globalization.CultureInfo.InvariantCulture), Font = new Font("Segoe UI", 9.5F), Location = new Point(78, 100), Size = new Size(82, 24), TextAlign = HorizontalAlignment.Right, BorderStyle = BorderStyle.FixedSingle };
+            Label lblToolY = new Label { Text = "Y (mm):", Font = new Font("Segoe UI", 8.5F, FontStyle.Bold), ForeColor = darkText, Location = new Point(176, 104), AutoSize = true };
+            TextBox txtToolY = new TextBox { Text = _robotService.ToolOffsetY.ToString("F1", System.Globalization.CultureInfo.InvariantCulture), Font = new Font("Segoe UI", 9.5F), Location = new Point(240, 100), Size = new Size(82, 24), TextAlign = HorizontalAlignment.Right, BorderStyle = BorderStyle.FixedSingle };
+
+            Label lblToolZ = new Label { Text = "Z (mm):", Font = new Font("Segoe UI", 8.5F, FontStyle.Bold), ForeColor = darkText, Location = new Point(14, 140), AutoSize = true };
+            TextBox txtToolZ = new TextBox { Text = _robotService.ToolOffsetZ.ToString("F1", System.Globalization.CultureInfo.InvariantCulture), Font = new Font("Segoe UI", 9.5F), Location = new Point(78, 136), Size = new Size(82, 24), TextAlign = HorizontalAlignment.Right, BorderStyle = BorderStyle.FixedSingle };
+            Label lblToolC = new Label { Text = "C (°):", Font = new Font("Segoe UI", 8.5F, FontStyle.Bold), ForeColor = darkText, Location = new Point(176, 140), AutoSize = true };
+            TextBox txtToolC = new TextBox { Text = _robotService.ToolOffsetC.ToString("F1", System.Globalization.CultureInfo.InvariantCulture), Font = new Font("Segoe UI", 9.5F), Location = new Point(240, 136), Size = new Size(82, 24), TextAlign = HorizontalAlignment.Right, BorderStyle = BorderStyle.FixedSingle };
+
+            pnlToolConfig.Controls.Add(lblToolX); pnlToolConfig.Controls.Add(txtToolX);
+            pnlToolConfig.Controls.Add(lblToolY); pnlToolConfig.Controls.Add(txtToolY);
+            pnlToolConfig.Controls.Add(lblToolZ); pnlToolConfig.Controls.Add(txtToolZ);
+            pnlToolConfig.Controls.Add(lblToolC); pnlToolConfig.Controls.Add(txtToolC);
+
+            Button btnApplyTool = new Button {
+                Text = "✔ BẬT TOOL 1 (TCP)",
+                Location = new Point(14, 176),
+                Size = new Size(158, 32),
+                BackColor = Color.FromArgb(70, 95, 133),
+                ForeColor = Color.White,
+                Font = new Font("Segoe UI", 8.25F, FontStyle.Bold),
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand
+            };
+            btnApplyTool.FlatAppearance.BorderSize = 0;
+
+            Button btnDisableTool = new Button {
+                Text = "✖ VỀ TOOL 0 (FLANGE)",
+                Location = new Point(180, 176),
+                Size = new Size(164, 32),
+                BackColor = Color.FromArgb(108, 117, 125),
+                ForeColor = Color.White,
+                Font = new Font("Segoe UI", 8.25F, FontStyle.Bold),
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand
+            };
+            btnDisableTool.FlatAppearance.BorderSize = 0;
+
+            pnlToolConfig.Controls.Add(btnApplyTool);
+            pnlToolConfig.Controls.Add(btnDisableTool);
+
+            Panel pnlDivShortcut = new Panel { Location = new Point(14, 218), Size = new Size(318, 1), BackColor = borderColor };
+            pnlToolConfig.Controls.Add(pnlDivShortcut);
+
+            Label lblShortcutTitle = new Label {
+                Text = "📍 LƯU & QUẢN LÝ TỌA ĐỘ ĐIỂM",
+                Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
+                ForeColor = primaryColor,
+                Location = new Point(14, 232),
+                AutoSize = true,
+                UseMnemonic = false
+            };
+            Label lblShortcutDesc = new Label {
+                Text = "Quản lý danh sách điểm dạy (Wafer, FOUP, Điểm chờ) đã được tách sang mục riêng trên thanh điều hướng.",
+                Font = new Font("Segoe UI", 8.5F),
+                ForeColor = mutedText,
+                Location = new Point(14, 256),
+                MaximumSize = new Size(318, 0),
+                AutoSize = true,
+                UseMnemonic = false
+            };
+            Button btnGoToTeaching = new Button {
+                Text = "📍 MỞ TRANG POINT TEACHING →",
+                Location = new Point(14, 304),
+                Size = new Size(318, 34),
+                BackColor = primaryColor,
+                ForeColor = Color.White,
+                Font = new Font("Segoe UI", 8.5F, FontStyle.Bold),
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand
+            };
+            btnGoToTeaching.FlatAppearance.BorderSize = 0;
+            btnGoToTeaching.Click += (s, e) => _navigateToTab?.Invoke(2);
+
+            pnlToolConfig.Controls.Add(lblShortcutTitle);
+            pnlToolConfig.Controls.Add(lblShortcutDesc);
+            pnlToolConfig.Controls.Add(btnGoToTeaching);
+
+            btnApplyTool.Click += (s, e) => {
+                double.TryParse(txtToolX.Text.Trim().Replace(",", "."), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double tx);
+                double.TryParse(txtToolY.Text.Trim().Replace(",", "."), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double ty);
+                double.TryParse(txtToolZ.Text.Trim().Replace(",", "."), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double tz);
+                double.TryParse(txtToolC.Text.Trim().Replace(",", "."), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double tc);
+                _robotService.SetToolOffset(tx, ty, tz, tc, "TOOL1");
+            };
+
+            btnDisableTool.Click += (s, e) => {
+                _robotService.DisableTool();
+            };
+
+            _robotService.ToolStateChanged += () => {
+                if (lblToolStatus.IsDisposed) return;
+                Action act = () => {
+                    if (_robotService.IsToolActive) {
+                        lblToolStatus.Text = $"Trạng thái: ✔ TOOL 1 (TCP Giác hút BẬT: {_robotService.ToolOffsetX:F1}mm)";
+                        lblToolStatus.ForeColor = Color.FromArgb(46, 125, 50);
+                    } else {
+                        lblToolStatus.Text = "Trạng thái: ✖ TOOL 0 (Mặt bích Flange)";
+                        lblToolStatus.ForeColor = mutedText;
+                    }
+                };
+                if (lblToolStatus.InvokeRequired) lblToolStatus.BeginInvoke(act);
+                else act();
+            };
+
+            workspaceGuide.Controls.Add(pnlTarget);
+            workspaceGuide.Controls.Add(pnlToolConfig);
+
+            // Responsive Layout Manager for Guide Key
+            Action layoutGuide = () => {
+                int pad = 12;
+                int availW = workspaceGuide.ClientSize.Width - pad * 2;
+                int availH = workspaceGuide.ClientSize.Height - pad * 2;
+
+                int leftW = Math.Max(360, (availW - pad) * 52 / 100);
+                int rightW = Math.Max(346, availW - leftW - pad);
+                int cardH = Math.Max(375, availH);
+
+                pnlTarget.Location = new Point(pad, pad);
+                pnlTarget.Size = new Size(leftW, cardH);
+
+                pnlToolConfig.Location = new Point(pad + leftW + pad, pad);
+                pnlToolConfig.Size = new Size(rightW, cardH);
+            };
+            workspaceGuide.Resize += (s, e) => layoutGuide();
+
+            pnlTarget.Resize += (s, e) => {
+                int innerW = Math.Max(328, pnlTarget.ClientSize.Width - 28);
+                int mW = (innerW - 12) / 3;
+                btnMode1.Location = new Point(14, 38); btnMode1.Size = new Size(mW, 29);
+                btnMode2.Location = new Point(14 + mW + 6, 38); btnMode2.Size = new Size(mW, 29);
+                btnMode3.Location = new Point(14 + (mW + 6) * 2, 38); btnMode3.Size = new Size(innerW - (mW + 6) * 2, 29);
+
+                btnReadToTarget.Size = new Size(innerW, 30);
+                pnlMode1.Size = new Size(innerW, 140);
+                pnlMode2.Size = new Size(innerW, 140);
+                pnlMode3.Size = new Size(innerW, 140);
+
+                int boxW = Math.Max(140, innerW - 130);
+                for (int i = 0; i < 4; i++) {
+                    if (txtAxes[i] != null) {
+                        txtAxes[i].Width = boxW;
+                        if (unitsAxes[i] != null) unitsAxes[i].Location = new Point(txtAxes[i].Right + 8, txtAxes[i].Top + 4);
+                    }
+                    if (tbAxes[i] != null) {
+                        tbAxes[i].Width = Math.Max(130, innerW - 135);
+                        if (lblAxesVal[i] != null) lblAxesVal[i].Location = new Point(tbAxes[i].Right + 6, tbAxes[i].Top + 5);
+                    }
+                    if (txtCart[i] != null) {
+                        txtCart[i].Width = Math.Max(155, innerW - 105);
+                    }
+                }
+
+                pnlDiv.Size = new Size(innerW, 1);
+                int speedLeft = Math.Max(118, lblSpeed.Right + 8);
+                tbSpeed.Location = new Point(speedLeft, 271);
+                tbSpeed.Size = new Size(Math.Max(110, innerW - speedLeft - 42), 26);
+                valSpeed.Location = new Point(tbSpeed.Right + 8, 276);
+
+                int halfBtn = (innerW - 8) / 2;
+                btnGuideRun.Location = new Point(14, 314); btnGuideRun.Size = new Size(halfBtn, 36);
+                btnGuideStop.Location = new Point(14 + halfBtn + 8, 314); btnGuideStop.Size = new Size(innerW - halfBtn - 8, 36);
+            };
+
+            pnlToolConfig.Resize += (s, e) => {
+                int innerW = Math.Max(318, pnlToolConfig.ClientSize.Width - 28);
+                lblToolSub.MaximumSize = new Size(innerW, 0);
+                int statusY = Math.Max(68, lblToolSub.Bottom + 8);
+                lblToolStatus.Location = new Point(14, statusY);
+
+                int row1Y = statusY + 32;
+                int row2Y = row1Y + 36;
+                lblToolX.Location = new Point(14, row1Y + 4);
+                txtToolX.Location = new Point(Math.Max(78, lblToolX.Right + 6), row1Y);
+                lblToolY.Location = new Point(txtToolX.Right + 16, row1Y + 4);
+                txtToolY.Location = new Point(Math.Max(lblToolY.Left + 64, lblToolY.Right + 6), row1Y);
+
+                lblToolZ.Location = new Point(14, row2Y + 4);
+                txtToolZ.Location = new Point(txtToolX.Left, row2Y);
+                lblToolC.Location = new Point(lblToolY.Left, row2Y + 4);
+                txtToolC.Location = new Point(txtToolY.Left, row2Y);
+
+                int btnToolY = row2Y + 38;
+                int halfToolBtn = (innerW - 8) / 2;
+                btnApplyTool.Location = new Point(14, btnToolY); btnApplyTool.Size = new Size(halfToolBtn, 32);
+                btnDisableTool.Location = new Point(14 + halfToolBtn + 8, btnToolY); btnDisableTool.Size = new Size(innerW - halfToolBtn - 8, 32);
+
+                int divY = btnToolY + 48;
+                pnlDivShortcut.Location = new Point(14, divY);
+                pnlDivShortcut.Size = new Size(innerW, 1);
+                lblShortcutTitle.Location = new Point(14, divY + 14);
+                lblShortcutDesc.Location = new Point(14, lblShortcutTitle.Bottom + 6);
+                lblShortcutDesc.MaximumSize = new Size(innerW, 0);
+                btnGoToTeaching.Location = new Point(14, lblShortcutDesc.Bottom + 12);
+                btnGoToTeaching.Size = new Size(innerW, 34);
+            };
+
+            // --- Point Teaching Workspace (Separated) ---
+            Panel workspaceTeaching = InitializePointTeachingWorkspace(primaryColor, darkText, mutedText, borderColor, canvasBg);
 
             // --- Shape Drawing Workspace ---
             Panel workspaceShapes = new Panel { Dock = DockStyle.Fill, BackColor = canvasBg, Padding = new Padding(16), Visible = false, AutoScroll = true };
@@ -717,30 +964,28 @@ namespace Test_1.UI
             // --- Camera Vision Workspace ---
             Panel workspaceCamera = InitializeCameraWorkspace(primaryColor, darkText, borderColor);
 
-            // Put all 4 workspaces into workspaceContainer
+            // Put all 5 workspaces into workspaceContainer
             workspaceContainer.Controls.Add(workspaceCamera);
             workspaceContainer.Controls.Add(workspaceShapes);
+            workspaceContainer.Controls.Add(workspaceTeaching);
             workspaceContainer.Controls.Add(workspaceGuide);
             workspaceContainer.Controls.Add(workspace);
 
-            // Navigation Events (4 tabs)
-            navBtns[0].Click += (s, e) => {
-                workspace.Visible = true; workspaceGuide.Visible = false; workspaceShapes.Visible = false; workspaceCamera.Visible = false;
-                updateNavStyles(0);
+            // Navigation Events (5 tabs)
+            _navigateToTab = (tabIdx) => {
+                workspace.Visible = (tabIdx == 0);
+                workspaceGuide.Visible = (tabIdx == 1);
+                workspaceTeaching.Visible = (tabIdx == 2);
+                workspaceShapes.Visible = (tabIdx == 3);
+                workspaceCamera.Visible = (tabIdx == 4);
+                updateNavStyles(tabIdx);
+                if (tabIdx == 1) layoutGuide();
             };
-            navBtns[1].Click += (s, e) => {
-                workspace.Visible = false; workspaceGuide.Visible = true; workspaceShapes.Visible = false; workspaceCamera.Visible = false;
-                updateNavStyles(1);
-                layoutGuide();
-            };
-            navBtns[2].Click += (s, e) => {
-                workspace.Visible = false; workspaceGuide.Visible = false; workspaceShapes.Visible = true; workspaceCamera.Visible = false;
-                updateNavStyles(2);
-            };
-            navBtns[3].Click += (s, e) => {
-                workspace.Visible = false; workspaceGuide.Visible = false; workspaceShapes.Visible = false; workspaceCamera.Visible = true;
-                updateNavStyles(3);
-            };
+
+            for (int i = 0; i < navBtns.Length; i++) {
+                int idx = i;
+                navBtns[i].Click += (s, e) => _navigateToTab(idx);
+            }
 
             // Initial nav selection style
             updateNavStyles(0);

@@ -14,6 +14,7 @@ namespace Test_1.UI
         private readonly LoggingService _logger;
         private readonly MotionService _motionService;
         private readonly CameraTransformService _cameraService;
+        private readonly PointTeachingService _pointTeachingService;
         private bool _connectionChangePending;
         private bool _statusCommandPending;
 
@@ -33,6 +34,7 @@ namespace Test_1.UI
             _motionService.OnDemoFinished += MotionService_OnDemoFinished;
 
             _cameraService = new CameraTransformService(_logger);
+            _pointTeachingService = new PointTeachingService(_logger);
 
             InitializeModernUI();
             

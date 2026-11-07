@@ -20,6 +20,16 @@ namespace Test_1.Services
 
         public event Action StateChanged;
 
+        // Tool Offset (TCP) - Giai phap 1: Quan ly toa do cong cu tren Robot Controller
+        public bool IsToolActive { get; private set; } = true;
+        public double ToolOffsetX { get; private set; } = 119.0;
+        public double ToolOffsetY { get; private set; } = 0.0;
+        public double ToolOffsetZ { get; private set; } = -20.0;
+        public double ToolOffsetC { get; private set; } = 0.0;
+        public string ToolName { get; private set; } = "TOOL1";
+
+        public event Action ToolStateChanged;
+
         public RobotService(LoggingService logger)
         {
             _logger = logger;
@@ -60,6 +70,7 @@ namespace Test_1.Services
                 {
                     State.IsConnected = true;
                     _logger.Log("\u2714 Connected successfully to robot controller.");
+                    ReapplyToolSettingsIfConnected();
                     NotifyStateChanged();
                     return true;
                 }
@@ -318,17 +329,93 @@ namespace Test_1.Services
             }
         }
 
+        private static bool IsFinite(double v)
+        {
+            return !double.IsNaN(v) && !double.IsInfinity(v);
+        }
+
+        private TsPointS BuildConfiguredWorldPoint(double x, double y, double z, double c, int? preferredConfig = null)
+        {
+            TsPointS cur = null;
+            lock (_feedbackLifecycle)
+            {
+                if (State.IsConnected && _robot != null)
+                {
+                    try { cur = _robot.GetPsnFbkWorld(); } catch { }
+                }
+            }
+
+            ConfigS config = ConfigS.LEFTY;
+            double tVal = 0.0;
+
+            if (cur != null)
+            {
+                if (cur.Config == ConfigS.LEFTY || cur.Config == ConfigS.RIGHTY)
+                {
+                    config = cur.Config;
+                }
+                tVal = cur.T;
+            }
+            else if (preferredConfig.HasValue)
+            {
+                ConfigS pref = (ConfigS)preferredConfig.Value;
+                if (pref == ConfigS.LEFTY || pref == ConfigS.RIGHTY)
+                {
+                    config = pref;
+                }
+            }
+
+            return new TsPointS
+            {
+                X = x,
+                Y = y,
+                Z = z,
+                C = c,
+                T = tVal,
+                Config = config
+            };
+        }
+
+        /// <summary>
+        /// Kiểm tra tọa độ (X, Y) có nằm trong vùng bán kính an toàn của SCARA THL300 hay không
+        /// (tự động tính bù chiều dài tay gắp nếu Tool TCP đang bật).
+        /// </summary>
+        public bool CheckWorkspaceRadius(double x, double y, out double radiusMm, out double minAllowedMm, out double maxAllowedMm)
+        {
+            radiusMm = Math.Sqrt(x * x + y * y);
+            if (!IsFinite(x) || !IsFinite(y))
+            {
+                minAllowedMm = 0;
+                maxAllowedMm = 0;
+                return false;
+            }
+
+            if (IsToolActive)
+            {
+                double toolLen = Math.Sqrt(ToolOffsetX * ToolOffsetX + ToolOffsetY * ToolOffsetY);
+                minAllowedMm = 0.0;
+                maxAllowedMm = 300.0 + toolLen;
+            }
+            else
+            {
+                minAllowedMm = 102.0;
+                maxAllowedMm = 298.0;
+            }
+
+            return radiusMm >= minAllowedMm && radiusMm <= maxAllowedMm;
+        }
+
         public void SetSpeed(int speedPercent)
         {
             if (State.IsConnected && _robot != null)
             {
-                _robot.MvSpeed = speedPercent;
+                _robot.MvSpeed = Math.Max(1, Math.Min(100, speedPercent));
             }
         }
 
         public void MoveJointAxis(int axisNo, double targetValue)
         {
-            if (!State.IsConnected || _robot == null) return;
+            if (!State.IsConnected || _robot == null || !IsFinite(targetValue)) return;
             try
             {
                 _robot.Movea(axisNo, targetValue);
@@ -342,16 +429,195 @@ namespace Test_1.Services
         public void MoveCartesian(double x, double y, double z, double c)
         {
             if (!State.IsConnected || _robot == null) return;
+            if (!IsFinite(x) || !IsFinite(y) || !IsFinite(z) || !IsFinite(c))
+            {
+                _logger.Log("[Robot] Lỗi MoveCartesian: Tọa độ không hợp lệ (NaN/Infinity).");
+                return;
+            }
+
             try
             {
-                TsPointS pt = new TsPointS { X = x, Y = y, Z = z, C = c, T = 0 };
+                TsPointS pt = BuildConfiguredWorldPoint(x, y, z, c);
+                _robot.MvConfig = ConfigS.FREE;
                 _robot.Move(pt);
+            }
+            catch (TsRemoteSException ex)
+            {
+                _logger.Log($"Move Cartesian Error (TsRemote {ex.errorCode}): {ex.Message}");
             }
             catch (Exception ex)
             {
                 _logger.Log($"Move Cartesian Error: {ex.Message}");
             }
         }
+
+        /// <summary>
+        /// Di chuyển PTP theo tọa độ Descartes (Move) có giữ cấu hình cánh tay ConfigS (LEFTY/RIGHTY) và kiểm tra điều kiện an toàn.
+        /// </summary>
+        public bool MoveCartesian(double x, double y, double z, double c, int speedPercent, int? preferredConfig = null)
+        {
+            if (!State.IsConnected || _robot == null)
+            {
+                _logger.Log("[Robot] Chưa kết nối tới Controller.");
+                return false;
+            }
+            if (!State.IsServoOn)
+            {
+                _logger.Log("[Robot] Servo đang TẮT — không thể di chuyển.");
+                return false;
+            }
+            if (!IsFinite(x) || !IsFinite(y) || !IsFinite(z) || !IsFinite(c))
+            {
+                _logger.Log("[Robot] Tọa độ đích không hợp lệ (NaN/Infinity).");
+                return false;
+            }
+
+            int clampedSpeed = Math.Max(1, Math.Min(100, speedPercent));
+            EnsureWatchdogRunning();
+
+            try
+            {
+                TsPointS pt = BuildConfiguredWorldPoint(x, y, z, c, preferredConfig);
+                _robot.MvSpeed = clampedSpeed;
+                _robot.MvConfig = ConfigS.FREE;
+                _robot.Move(pt);
+                return true;
+            }
+            catch (TsRemoteSException ex)
+            {
+                _logger.Log($"[Robot] Lỗi MoveCartesian (TsRemote {ex.errorCode}): {ex.Message}");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                _logger.Log($"[Robot] Lỗi MoveCartesian: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Di chuyển nội suy đường thẳng (Linear / Moves) có giữ cấu hình cánh tay ConfigS (LEFTY/RIGHTY).
+        /// Rất quan trọng cho chu trình gắp & rút Wafer thẳng hàng trong khay FOUP.
+        /// </summary>
+        public bool MoveLinear(double x, double y, double z, double c, int speedPercent, int? preferredConfig = null)
+        {
+            if (!State.IsConnected || _robot == null)
+            {
+                _logger.Log("[Robot] Chưa kết nối tới Controller.");
+                return false;
+            }
+            if (!State.IsServoOn)
+            {
+                _logger.Log("[Robot] Servo đang TẮT — không thể di chuyển.");
+                return false;
+            }
+            if (!IsFinite(x) || !IsFinite(y) || !IsFinite(z) || !IsFinite(c))
+            {
+                _logger.Log("[Robot] Tọa độ đích không hợp lệ (NaN/Infinity).");
+                return false;
+            }
+
+            int clampedSpeed = Math.Max(1, Math.Min(100, speedPercent));
+            EnsureWatchdogRunning();
+
+            try
+            {
+                TsPointS pt = BuildConfiguredWorldPoint(x, y, z, c, preferredConfig);
+                _robot.MvSpeed = clampedSpeed;
+                _robot.MvConfig = ConfigS.FREE;
+                _robot.Moves(pt);
+                return true;
+            }
+            catch (TsRemoteSException ex)
+            {
+                _logger.Log($"[Robot] Lỗi MoveLinear (TsRemote {ex.errorCode}): {ex.Message}");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                _logger.Log($"[Robot] Lỗi MoveLinear: {ex.Message}");
+                return false;
+            }
+        }
+
+        #region Tool Offset Management (Solution 1)
+
+        public bool SetToolOffset(double x, double y, double z, double c, string toolName = "TOOL1")
+        {
+            ToolOffsetX = x;
+            ToolOffsetY = y;
+            ToolOffsetZ = z;
+            ToolOffsetC = c;
+            ToolName = string.IsNullOrEmpty(toolName) ? "TOOL1" : toolName;
+            IsToolActive = true;
+
+            if (State.IsConnected && _robot != null)
+            {
+                try
+                {
+                    TsTransS trans = new TsTransS { X = x, Y = y, Z = z, C = c };
+                    _robot.MvTool = trans;
+                    try { _robot.SetTransTool(ToolName, x, y, z, c); } catch { }
+                    _logger.Log($"[Tool] Đã kích hoạt Tool Offset ({ToolName}) trên Controller: X={x:F2}mm, Y={y:F2}mm, Z={z:F2}mm, C={c:F2}°");
+                }
+                catch (Exception ex)
+                {
+                    _logger.Log($"[Tool] Cảnh báo kích hoạt Tool trên Controller: {ex.Message}");
+                }
+            }
+            else
+            {
+                _logger.Log($"[Tool] Đã lưu thông số Tool Offset ({ToolName}): X={x:F2}mm, Y={y:F2}mm, Z={z:F2}mm, C={c:F2}° (Sẽ đồng bộ khi kết nối)");
+            }
+
+            ToolStateChanged?.Invoke();
+            return true;
+        }
+
+        public bool DisableTool()
+        {
+            IsToolActive = false;
+            if (State.IsConnected && _robot != null)
+            {
+                try
+                {
+                    TsTransS trans = new TsTransS { X = 0, Y = 0, Z = 0, C = 0 };
+                    _robot.MvTool = trans;
+                    _logger.Log("[Tool] Đã tắt Tool Offset. Trở về điều khiển mặt bích Flange (Tool 0).");
+                }
+                catch (Exception ex)
+                {
+                    _logger.Log($"[Tool] Cảnh báo tắt Tool trên Controller: {ex.Message}");
+                }
+            }
+            else
+            {
+                _logger.Log("[Tool] Đã tắt Tool Offset (Trở về mặt bích Flange / Tool 0).");
+            }
+
+            ToolStateChanged?.Invoke();
+            return true;
+        }
+
+        public void ReapplyToolSettingsIfConnected()
+        {
+            if (State.IsConnected && _robot != null && IsToolActive)
+            {
+                try
+                {
+                    TsTransS trans = new TsTransS { X = ToolOffsetX, Y = ToolOffsetY, Z = ToolOffsetZ, C = ToolOffsetC };
+                    _robot.MvTool = trans;
+                    try { _robot.SetTransTool(ToolName, ToolOffsetX, ToolOffsetY, ToolOffsetZ, ToolOffsetC); } catch { }
+                    _logger.Log($"[Tool] Đã nạp Tool Offset ({ToolName}) sang Controller: X={ToolOffsetX:F2}, Y={ToolOffsetY:F2}, Z={ToolOffsetZ:F2}, C={ToolOffsetC:F2}");
+                }
+                catch (Exception ex)
+                {
+                    _logger.Log($"[Tool] Lỗi nạp lại Tool Offset khi kết nối: {ex.Message}");
+                }
+            }
+        }
+
+        #endregion
 
         public async Task DrawSquareAsync(double sideLength)
         {
@@ -865,6 +1131,40 @@ namespace Test_1.Services
             }
         }
 
+        /// <summary>
+        /// Mở khóa cờ dừng lệnh di chuyển (MoveStop) bên trong TsRemoteS sau khi gọi ProgramStop.
+        /// </summary>
+        public void ResetMove()
+        {
+            if (_robot == null || !State.IsConnected) return;
+            try
+            {
+                _robot.ResetMove();
+                _logger.Log("[Robot] Đã gọi ResetMove (mở khóa trạng thái dừng lệnh di chuyển).");
+            }
+            catch (Exception ex)
+            {
+                _logger.Log($"[Robot] Cảnh báo ResetMove: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Xóa cờ cảnh báo lỗi (Alarm) trên bộ điều khiển TSL3000.
+        /// </summary>
+        public void ResetAlarm()
+        {
+            if (_robot == null || !State.IsConnected) return;
+            try
+            {
+                _robot.ResetALARM();
+                _logger.Log("[Robot] Đã gọi ResetALARM (xóa cảnh báo lỗi Controller).");
+            }
+            catch (Exception ex)
+            {
+                _logger.Log($"[Robot] Cảnh báo ResetALARM: {ex.Message}");
+            }
+        }
+
         public void StopMotion()
         {
             if (!State.IsConnected || _robot == null) return;
@@ -872,12 +1172,60 @@ namespace Test_1.Services
             {
                 _robot.ProgramStop();
                 try { _robot.ProgramBreak(); } catch { }
-                _logger.Log("STOP requested. Robot motion halted.");
+                try { _robot.ResetMove(); } catch { }
+                _logger.Log("STOP requested. Robot motion halted & move lock reset.");
             }
             catch (Exception ex)
             {
                 _logger.Log($"Stop Error: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Đợi Robot di chuyển thực tế tới tọa độ mục tiêu (kiểm tra sai số XY và Z, hỗ trợ hủy khẩn cấp qua CancellationToken).
+        /// Ngăn chặn hiện tượng gửi dồn lệnh vào socket làm nghẽn hoặc kẹt bộ điều khiển TSL3000.
+        /// </summary>
+        public bool WaitUntilReached(
+            double targetX,
+            double targetY,
+            double? targetZ = null,
+            double toleranceXY = 1.5,
+            double toleranceZ = 2.0,
+            int timeoutMs = 15000,
+            CancellationToken token = default(CancellationToken))
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            while (sw.ElapsedMilliseconds < timeoutMs)
+            {
+                if (token.IsCancellationRequested || !State.IsConnected)
+                {
+                    StopMotion();
+                    return false;
+                }
+
+                var pos = GetCurrentPosition()?.WorldPosition;
+                if (pos != null)
+                {
+                    double dx = pos.X - targetX;
+                    double dy = pos.Y - targetY;
+                    bool xyReached = Math.Sqrt(dx * dx + dy * dy) <= toleranceXY;
+                    bool zReached = true;
+                    if (targetZ.HasValue)
+                    {
+                        zReached = Math.Abs(pos.Z - targetZ.Value) <= toleranceZ;
+                    }
+
+                    if (xyReached && zReached)
+                    {
+                        return true;
+                    }
+                }
+
+                Thread.Sleep(30);
+            }
+
+            _logger.Log($"[Robot] Cảnh báo: Quá thời gian chờ ({timeoutMs}ms) khi đợi Robot tới (X={targetX:F2}, Y={targetY:F2}{(targetZ.HasValue ? $", Z={targetZ.Value:F2}" : "")}).");
+            return false;
         }
 
         private bool HasActiveAlarms(TsStatusAllS status)

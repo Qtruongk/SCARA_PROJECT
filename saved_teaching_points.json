@@ -1,0 +1,50 @@
+﻿{
+  "points": [
+    {
+      "id": "P1",
+      "name": "P3",
+      "x": 23.3700,
+      "y": 415.3370,
+      "z": 17.4130,
+      "c": 95.9500,
+      "j1": 0.0000,
+      "j2": 0.0000,
+      "j3": 0.0000,
+      "j4": 0.0000,
+      "arm_config": 0,
+      "speed": 100,
+      "delay_ms": 10,
+      "motion_type": "PTP",
+      "is_tcp": true,
+      "tool_name": "TOOL1",
+      "tool_offset_x": 119.0000,
+      "tool_offset_y": 0.0000,
+      "tool_offset_z": -20.0000,
+      "tool_offset_c": 0.0000,
+      "saved_at": "2026-11-07 11:53:20"
+    },
+    {
+      "id": "P2",
+      "name": "P2",
+      "x": -15.0890,
+      "y": -415.9920,
+      "z": 17.4130,
+      "c": -83.1600,
+      "j1": 0.0000,
+      "j2": 0.0000,
+      "j3": 0.0000,
+      "j4": 0.0000,
+      "arm_config": 0,
+      "speed": 100,
+      "delay_ms": 10,
+      "motion_type": "PTP",
+      "is_tcp": true,
+      "tool_name": "TOOL1",
+      "tool_offset_x": 119.0000,
+      "tool_offset_y": 0.0000,
+      "tool_offset_z": -20.0000,
+      "tool_offset_c": 0.0000,
+      "saved_at": "2026-11-07 11:53:22"
+    }
+  ]
+}
