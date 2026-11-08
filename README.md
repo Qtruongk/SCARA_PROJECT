@@ -1,16 +1,22 @@
 # Nghiên cứu, phát triển hệ thống điều khiển và giám sát Robot SCARA gắp chuyển Wafer bán dẫn tích hợp Thị giác máy tính
+
 *(SCARA Robot Controller UI - Shibaura Machine THL300)*
 
 ## Giới thiệu
-Đây là dự án nghiên cứu và phát triển hệ thống phần mềm điều khiển, giám sát và thị giác máy tính cho cánh tay robot công nghiệp SCARA (Shibaura Machine THL300) ứng dụng trong bài toán **gắp chuyển phiến bán dẫn (Wafer Handling / Wafer Transfer)**. 
+
+Đây là dự án nghiên cứu và phát triển hệ thống phần mềm điều khiển, giám sát và thị giác máy tính cho cánh tay robot công nghiệp SCARA (Shibaura Machine THL300) ứng dụng trong bài toán **gắp chuyển phiến bán dẫn (Wafer Handling / Wafer Transfer)**.
 
 Hệ thống cung cấp:
+
 - Giao diện người dùng (UI) trực quan, kết nối TCP tốc độ cao với bộ điều khiển TSL3000.
 - Giám sát trạng thái phần cứng và mô hình **Bản sao số 3D (3D Digital Twin)** thời gian thực theo phản hồi từ controller.
 - Quy hoạch quỹ đạo chuyển động mượt mà (7-phase S-curve trajectory) hạn chế giật động học (*jerk*), bảo vệ an toàn cho wafer silicon mỏng.
 - Tích hợp hệ thống thị giác máy tính (**Camera Vision**) với kỹ thuật căn chuẩn Hand-Eye (Eye-to-Hand) chuyển đổi tọa độ Pixel sang tọa độ Robot Base đạt độ chính xác dưới 1mm phục vụ định vị và gắp chuyển wafer.
 
+hello world
+
 ## Cấu trúc thư mục
+
 - **Core/**: Chứa logic chính của ứng dụng và giao diện.
   - **Models/**: Định nghĩa cấu trúc dữ liệu và trạng thái của robot.
   - **Services/**: Xử lý logic nghiệp vụ, kết nối phần cứng và toán học chuyển động.
@@ -22,13 +28,14 @@ Hệ thống cung cấp:
 - **Tools/THL300/**: Công cụ chuyển đổi và kiểm tra CAD; chỉ cần khi tạo lại mesh.
 
 ## Chức năng chính
+
 - Kết nối với Robot Controller qua giao thức TCP.
 - Quản lý và theo dõi trạng thái hệ thống (Kết nối, Servo, Cảnh báo).
 - Hỗ trợ tính toán và thực thi quỹ đạo chuyển động (S-Curve trajectory).
 - Hệ thống ghi log tập trung.
 - Digital Twin 3D ngay giữa Home, cập nhật theo vị trí phản hồi thực của robot.
 
-## Tiến độ dự án 
+## Tiến độ dự án
 
 ### Phase 1: Nền tảng điều khiển, Digital Twin, Quy hoạch quỹ đạo & Calib Camera
 
@@ -87,10 +94,12 @@ Hệ thống cung cấp:
 | 5 | **Tích hợp hệ thống SoC/FPGA vào phần mềm điều khiển & Đánh giá hiệu năng** | Kết nối bo mạch FPGA với máy tính điều khiển IPC qua giao thức Ethernet/PCIe thời gian thực; thực hiện đo kiểm, đánh giá so sánh hiệu năng (độ trễ xử lý, FPS, mức tiêu thụ năng lượng và tính ổn định thời gian thực) giữa kiến trúc FPGA-based và hệ thống PC truyền thống. | ⏳ Chờ thực hiện |
 
 ## Yêu cầu và Cài đặt
+
 1. Mở project (`Test_1.sln`) bằng Visual Studio.
 2. Đảm bảo các thư viện trong thư mục `Libs` được tham chiếu đầy đủ.
 3. Build và chạy project.
 4. (Tùy chọn) Thay đổi IP, Port mặc định tại file `Constants.cs` nếu cần.
 
 ## Tài liệu kỹ thuật
+
 Vui lòng tham khảo file `ARCHITECTURE.md` để nắm rõ kiến trúc chi tiết, sơ đồ thư mục và hướng dẫn sửa lỗi (troubleshooting) cơ bản.
